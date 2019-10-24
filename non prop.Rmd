@@ -1,0 +1,402 @@
+---
+title: 'Survival Analysis: Non Proportional Hazards Model'
+author: "Nesma Magdi"
+date: "October 21, 2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Greg)
+library(dplyr)
+library(tidyr)
+library(finalfit)
+library(ggplot2)
+library(moments)
+library(e1071)
+library(dummies)
+library(dplyr)
+library(tidyr)
+library(finalfit)
+library(dummies)
+library(moments)
+library(corrplot)
+library(scatterplot3d)
+library(ggplot2)
+library(ggplot2)
+library(caret)
+library(GGally)
+library(ggthemes)
+library(broom)
+library(dplyr)
+library(bindrcpp)
+library(caTools)
+library(rattle)
+library(RColorBrewer)
+library(nnet)
+library(rpart.plot)
+library(dichromat)
+library(Rmpfr)
+library(digest)
+library(convertr)
+library(microbenchmark)
+library(varhandle)
+library(hablar)
+library(magrittr)
+library(survminer)
+library(markovchain)
+library(survival)
+library(expss)
+library(AMR)
+library(ggpubr)
+library(gplots)
+library(devtools)
+library(dmetar)
+library(grDevices)
+library(Hmisc)
+library(rattle)
+library(reshape)
+library(magrittr)
+library(ggpubr)
+library(gridExtra)
+library(PerformanceAnalytics)
+library(highcharter)
+library(car)
+library(coxphw)
+library(mgcv)
+library(clustcurv)
+```
+
+## Ovarian Cancer:
+
+Survival in a randomised trial comparing two treatments for ovarian cancer.
+Format
+
+Treatment of patients with advanced ovarian carcinoma (stages IIIB and IV) using either cyclophosphamide alone (1 g/m2) or cyclophosphamide (500 mg/m2) plus adriamycin (40 mg/m2) by iv injection every 3 weeks each produced partial regression in approximately one third of the patients.
+
+```{r ovarian, message=FALSE, warning=FALSE}
+
+data("ovarian")
+attach(ovarian)
+
+Status <- ifelse(fustat == 0,"Death", "Censord")
+Progression <- ifelse(resid.ds == 1, "No Progression", "Progression")
+Treatment <- ifelse(rx == 1, "Endoxan alone", "Endoxan + Adria")
+Performance <- ifelse(ecog.ps == 1, "High", "Low")
+dummy_Age <- ifelse(age >= 50 ,"Old","Young")
+
+ex <- data.frame(Status, Progression, Treatment, Performance, dummy_Age)
+
+Ovarian <- cbind(ovarian, ex)
+
+Ovarian$dummy_Age <- factor(Ovarian$dummy_Age)
+Ovarian$Status<- factor(Ovarian$Status)
+Ovarian$Progression <- factor(Ovarian$Progression)
+Ovarian$Treatment <- factor(Ovarian$Treatment)
+Ovarian$Performance <- factor(Ovarian$Performance)
+
+
+write.csv(Ovarian, file="ovarian.csv")
+ovarian <- read.csv(choose.files(), header = T)
+attach(ovarian)
+
+```
+
+## Descrition:
+
+```{r , echo=FALSE}
+
+Abbreviation <- c("futime", "fustat", "age", "resid.ds", "rx", "ecog.ps")
+
+Description <- c("Survival or Censoring time", "Censoring status", "Age in years", "Residual disease present", "Treatment Group", "ECOG Performance Status")
+
+Data <- as.data.frame(Description , Abbreviation)
+Data
+```
+
+```{r , echo=TRUE}
+
+summary(ovarian)
+
+Count <- table(Status, Treatment)
+Percent <- prop.table(Count)*100
+
+persent <- as.data.frame(cbind(Count, Percent))
+persent
+
+Tret_Per <- as.data.frame(ovarian %>%
+            summary_factorlist("Status", "Treatment", 
+                               add_dependent_label = T, p=T, cont_cut = 1))
+
+Tret_Per
+
+```
+
+# Survival Analysis:
+
+*Kaplan-Meier Estimator:
+
+- Pointwise CI S(t):
+
+H0: No difference in Survival between two or more independent groups.
+
+```{r warning=FALSE, , echo=TRUE}
+
+surviv <- survfit(Surv(futime, fustat) ~ 1, data = ovarian)
+print(surviv, print.rmean = TRUE)
+
+summary(surviv)
+
+ggsurvplot(surviv, data = ovarian, pval = TRUE)
+
+```
+
+The 95% confidence interval of survival time is (464, NA); NA in this case means infinity. A 95% upper confidence limit of NA/infinity is common in survival analysis due to the fact that the data is skewed.
+
+*Comparing Survival Curves:
+
+```{r warning=FALSE, , echo=TRUE}
+
+surviv1 <- survfit(Surv(futime, fustat) ~ Treatment, data = ovarian)
+summary(surviv1)
+
+plot(surviv1, ylab = "Survival", xlab = "Time (in days)", 
+     col = c("dodgerblue4", "firebrick4"), marktime = TRUE, pval = TRUE)
+legend("topright", col = c("dodgerblue4", "firebrick4"), 
+       legend = levels(ovarian$Treatment), bty = "n", pch = 19)
+
+```
+
+*Comparing Survival:
+
+```{r echo=TRUE}
+
+surviv2 <- survdiff(Surv(futime, fustat) ~ Treatment, data = ovarian)
+surviv2
+
+autoplot(surviv1)
+
+```
+
+H0: rejected (p-value = 0.3).
+
+*Post-hoc analysis:
+
+```{r warning=FALSE, , echo=TRUE}
+
+surviv_post <- pairwise_survdiff(Surv(futime, fustat) ~ Treatment, data = ovarian)
+
+surviv_post
+
+```
+
+=========================================================================
+
+# Cox Proportional Hazards:
+
+-Hazard functions for each individual should be strictily parallel & Hazard ratio is constant over time.
+
+- HR = 1: No effect.
+  HR > 1: Increase in Hazards.
+  HR < 1: Reduced in Hazards.
+  
+```{r warning=FALSE, , echo=TRUE}
+
+Model2 <- coxph(Surv(futime, fustat) ~ Treatment+  age + 
+                  Progression + Performance, data = ovarian)
+
+summary(Model2)
+
+termplot(Model2, terms = "Treatment")
+
+```
+
+*Interpretation:
+
+1- Estimated Hazard Ratio for Young Ages (<= 50) Versus Old Ages (>50) is 1.133 with confidence interval CI of (1.0335 - 1.242).
+Estimated Hazard Ratio for Old Ages Versus Young Ages is 0.8827 with confidence interval CI of (1.0335 - 1.242).
+
+=========================================================================
+
+# Test Significance of variance or interaction term in the Model:
+
+*Wald Test (Maximum Likelihood Estimates):
+
+```{r warning=FALSE, , echo=TRUE}
+
+summary(Model2)$coef
+
+wald <- summary(Model2)$coef[4, 1]/summary(Model2)$coef[4, 3]
+pvalue <- wald * pnorm(wald, lower.tail = FALSE)
+pvalue
+```
+
+*p-value of Treatment, Progression, ECOG Performance status is > 0.05. Fail to Reject Null Hypothesis. 
+
+According to p-value of the test, Fail to Reject null hypothesis (for the Treatment, Progression, ECOG Performance status variable)
+Thus, the model must not include this variable.
+
+*Likrlihood Ratio Test (LRT):
+
+LRT Statistics has better statistical properities.
+First, The reduced. Second, The full.
+
+```{r warning=FALSE, , echo=TRUE}
+
+Model3 <- coxph(Surv(futime, fustat) ~ age, data = ovarian)
+
+anova(Model3, Model2)
+
+Model2$loglik
+```
+
+The First is the log likelihood of a model that contains non of the predictors, So we need the second one.
+
+```{r warning=FALSE, , echo=TRUE}
+
+chi <- 2 * Model2$loglik[2] * Model3$loglik[2]
+
+pvalue2 <- 1 - pchisq(chi, df = 3)
+
+pvalue2
+
+```
+
+In this case, using a=0.05 & testing the significance of Performance variable. We must remove it from the model.
+
+=========================================================================
+
+# Evaluate Proportional Hazard:
+
+*Note:
+If the graph of the hazards cross for two or more categories of the predictor of interest: PH assumption not met.
+
+*a- Graphical Approach:
+
+```{r warning=FALSE, , echo=TRUE}
+
+Model4 <- survfit(Surv(futime, fustat) ~ Treatment, data = ovarian)
+
+plot(Model4, fun = "cloglog", xlab = "Time (in days) using log", ylab = "log-log Survival", 
+     main = "log-log Curves", col = c("dodgerblue4", "firebrick4"))
+legend("topright", col = c("dodgerblue4", "firebrick4"), 
+       legend = levels(ovarian$Treatment), bty = "n", pch = 19)
+
+```
+
+It seems that the proportional hazards assumption is violated as the log-log survival curves are not parallel.
+
+*b- Schoenfeld Residuals:
+
+Difference between the observed covariate and the expected given the risk set at that time.
+
+```{r warning=FALSE, , echo=TRUE}
+
+residuals_ov <- cox.zph(Model2)
+residuals_ov
+par(mfrow = c(1, 2))
+plot(residuals_ov, var = 1)
+plot(residuals_ov, var = 2)
+plot(residuals_ov, var = 3)
+plot(residuals_ov, var = 4)
+
+```
+
+It seems that the residuals not flat, not centered about zero..
+
+=========================================================================
+
+# Non Proportional Hazard:
+
+#Stratified Proportional Hazard Model (1- Treatment):
+
+H0: The regression coeffecient are assumed to be the same for each stratum.
+
+Ha: The baseline hazard functions may be different and completely unrelated.
+
+```{r warning=FALSE, , echo=TRUE}
+
+Model5 <- coxph(Surv(futime, fustat) ~ Treatment + strata(dummy_Age), data = ovarian)
+
+summary(Model5)
+
+ggsurvplot(survfit(Model5), data = ovarian, conf.int = T)
+
+```
+
+p-value of Treatment Now (p-value = 0.0429) is Significant, not similar to previous model without stratification (p-value = 0.16158).
+
+```{r warning=FALSE, , echo=TRUE}
+
+Fit2 <- survfit(Surv(futime, fustat) ~ factor(Treatment), data = ovarian)
+ autoplot(Fit2)
+
+```
+
+=========================================================================
+
+#Stratified Proportional Hazard Model (2- Progression):
+
+H0: The regression coeffecient are assumed to be the same for each stratum.
+
+Ha: The baseline hazard functions may be different and completely unrelated.
+
+```{r warning=FALSE, , echo=TRUE}
+
+Model5_1 <- coxph(Surv(futime, fustat) ~ Progression + strata(dummy_Age), data = ovarian)
+
+summary(Model5_1)
+
+ggsurvplot(survfit(Model5_1), data = ovarian, conf.int = T)
+
+```
+
+p-value of Treatment Now (p-value = 0.0803) is not Significant, but also not similar to previous model without stratification (p-value = 0.29541).
+
+```{r warning=FALSE, , echo=TRUE}
+
+Fit3 <- survfit(Surv(futime, fustat) ~ factor(Progression), data = ovarian)
+ autoplot(Fit3)
+
+```
+
+=========================================================================
+
+#Stratified Proportional Hazard Model (3- Ecog Performance Status):
+
+H0: The regression coeffecient are assumed to be the same for each stratum.
+
+Ha: The baseline hazard functions may be different and completely unrelated.
+
+```{r warning=FALSE, , echo=TRUE}
+
+Model5_2 <- coxph(Surv(futime, fustat) ~ Performance + strata(dummy_Age), data = ovarian)
+
+summary(Model5_2)
+
+ggsurvplot(survfit(Model5_2), data = ovarian, conf.int = T)
+
+```
+
+p-value of Treatment Now (p-value = 0.651) is not Significant, but also not similar to previous model without stratification (p-value = 0.60158).
+
+```{r warning=FALSE, , echo=TRUE}
+
+Fit4 <- survfit(Surv(futime, fustat) ~ factor(Performance), data = ovarian)
+ autoplot(Fit4)
+
+```
+
+=========================================================================
+
+#Conclusion:
+
+1- Estimated Hazard Ratio for Old Patients (>= 50) Recieving Cyclophosphamide alone Versus Old Patients (>= 50) Recieving Cyclophosphamide & Adriamycin is 3.463 (Increased Hazards) with confidence interval CI of (1.041 - 11.52).
+
+Estimated Hazard Ratio for Old Patients (>= 50) Recieving Cyclophosphamide & Adriamycin Versus Old Patients (>= 50) Recieving Cyclophosphamide alone is 0.2888 (Reduced Hazards) with confidence interval CI of (1.0335 - 1.242).
+
+2- This means, Recieving Cyclophosphamide (500 mg/m2) plus Adriamycin (40 mg/m2) in old Female Patients (>= 50) Reduce hazard of of death by 28.9%, than Recieving Cyclophosphamide alone (1 g/m2) in old Female Patients (>= 50).
+
+==================================================================================================
